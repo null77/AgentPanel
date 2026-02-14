@@ -1,0 +1,81 @@
+{
+  "name": "claude-code-panel",
+  "displayName": "Claude Code Panel",
+  "description": "A dedicated panel tab for running Claude Code CLI alongside your terminals",
+  "version": "0.1.0",
+  "publisher": "jmadill",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "claudeCodePanel",
+          "title": "Claude Code",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeCodePanel": [
+        {
+          "type": "webview",
+          "id": "claudeCodePanel.terminalView",
+          "name": "Claude Code"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeCodePanel.restart",
+        "title": "Restart Claude Code",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "claudeCodePanel.clear",
+        "title": "Clear Claude Code Terminal",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "claudeCodePanel.focus",
+        "title": "Focus Claude Code Panel"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeCodePanel.clear",
+          "when": "view == claudeCodePanel.terminalView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeCodePanel.restart",
+          "when": "view == claudeCodePanel.terminalView",
+          "group": "navigation@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "build:production": "node esbuild.js --production",
+    "vscode:prepublish": "npm run build:production"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}

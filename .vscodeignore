@@ -1,0 +1,10 @@
+.vscode/**
+src/**
+tsconfig.json
+esbuild.js
+.gitignore
+node_modules/**
+!node_modules/@xterm/xterm/css/xterm.css
+!node_modules/@xterm/xterm/lib/xterm.js
+!node_modules/@xterm/addon-fit/lib/addon-fit.js
+!node_modules/@xterm/addon-webgl/lib/addon-webgl.js
