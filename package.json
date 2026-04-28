@@ -1,8 +1,8 @@
 {
-  "name": "claude-code-panel",
-  "displayName": "Claude Code Panel",
-  "description": "A dedicated panel tab for running Claude Code CLI alongside your terminals",
-  "version": "0.1.0",
+  "name": "agent-panel",
+  "displayName": "Agent Panel",
+  "description": "A dedicated panel tab for running TUI agent CLIs (Claude Code, OpenCode, and more) alongside your terminals",
+  "version": "0.2.0",
   "publisher": "jmadill",
   "engines": {
     "vscode": "^1.85.0"
@@ -10,56 +10,130 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:agentPanel.switchAgent"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "panel": [
         {
-          "id": "claudeCodePanel",
-          "title": "Claude Code",
+          "id": "agentPanel",
+          "title": "Agent Panel",
           "icon": "resources/icon.svg"
         }
       ]
     },
     "views": {
-      "claudeCodePanel": [
+      "agentPanel": [
         {
           "type": "webview",
-          "id": "claudeCodePanel.terminalView",
-          "name": "Claude Code"
+          "id": "agentPanel.terminalView",
+          "name": "Agent Panel"
         }
       ]
     },
     "commands": [
       {
-        "command": "claudeCodePanel.restart",
-        "title": "Restart Claude Code",
+        "command": "agentPanel.switchAgent",
+        "title": "Switch Agent",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "agentPanel.restart",
+        "title": "Restart Agent",
         "icon": "$(debug-restart)"
       },
       {
-        "command": "claudeCodePanel.clear",
-        "title": "Clear Claude Code Terminal",
+        "command": "agentPanel.clear",
+        "title": "Clear Agent Terminal",
         "icon": "$(clear-all)"
       },
       {
-        "command": "claudeCodePanel.focus",
-        "title": "Focus Claude Code Panel"
+        "command": "agentPanel.focus",
+        "title": "Focus Agent Panel"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "claudeCodePanel.clear",
-          "when": "view == claudeCodePanel.terminalView",
+          "command": "agentPanel.switchAgent",
+          "when": "view == agentPanel.terminalView",
           "group": "navigation@1"
         },
         {
-          "command": "claudeCodePanel.restart",
-          "when": "view == claudeCodePanel.terminalView",
+          "command": "agentPanel.clear",
+          "when": "view == agentPanel.terminalView",
           "group": "navigation@2"
+        },
+        {
+          "command": "agentPanel.restart",
+          "when": "view == agentPanel.terminalView",
+          "group": "navigation@3"
         }
       ]
+    },
+    "configuration": {
+      "title": "Agent Panel",
+      "properties": {
+        "agentPanel.agents": {
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Custom agents available in the Agent Panel. Entries with an `id` matching a built-in (`claude-code`, `opencode`) override that built-in. New ids extend the list.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "label", "command"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                "description": "Unique kebab-case identifier."
+              },
+              "label": {
+                "type": "string",
+                "description": "Display name shown in the Switch Agent picker and view header."
+              },
+              "command": {
+                "type": "string",
+                "description": "Binary name or absolute path. Resolved via where/which at spawn time if not absolute."
+              },
+              "args": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": [],
+                "description": "Arguments passed to the agent binary."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Extra environment variables merged on top of the inherited environment."
+              },
+              "icon": {
+                "type": "string",
+                "description": "Optional codicon id (e.g. \"sparkle\") shown in the picker."
+              }
+            }
+          }
+        },
+        "agentPanel.defaultAgent": {
+          "type": "string",
+          "default": "claude-code",
+          "scope": "window",
+          "description": "Agent id launched on first open when no previous selection exists."
+        },
+        "agentPanel.hiddenBuiltins": {
+          "type": "array",
+          "default": [],
+          "scope": "window",
+          "items": {
+            "type": "string",
+            "enum": ["claude-code", "opencode"]
+          },
+          "description": "Built-in agent ids to hide from the Switch Agent picker."
+        }
+      }
     }
   },
   "scripts": {

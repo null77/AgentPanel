@@ -4,8 +4,11 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
 import { findNodePtyPath } from './utils';
+import { AgentDefinition, AgentRegistry } from './AgentRegistry';
 
-export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
+const STATE_KEY = 'agentPanel.activeAgentId';
+
+export class AgentTerminalProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _ptyHost?: cp.ChildProcess;
     private _disposables: vscode.Disposable[] = [];
@@ -13,11 +16,37 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
     private _pendingOutput: string[] = [];
     private _lastCols = 80;
     private _lastRows = 24;
+    private _activeAgent: AgentDefinition;
 
     constructor(
         private readonly _context: vscode.ExtensionContext,
-        private readonly _log: vscode.LogOutputChannel
-    ) {}
+        private readonly _log: vscode.LogOutputChannel,
+        private readonly _registry: AgentRegistry
+    ) {
+        this._activeAgent = this._resolveInitialAgent();
+        this._log.info(`Initial agent: ${this._activeAgent.id} (${this._activeAgent.label})`);
+    }
+
+    get activeAgent(): AgentDefinition {
+        return this._activeAgent;
+    }
+
+    private _resolveInitialAgent(): AgentDefinition {
+        const wsId = this._context.workspaceState.get<string>(STATE_KEY);
+        if (wsId) {
+            const found = this._registry.getAgent(wsId);
+            if (found) { return found; }
+        }
+        const globalId = this._context.globalState.get<string>(STATE_KEY);
+        if (globalId) {
+            const found = this._registry.getAgent(globalId);
+            if (found) { return found; }
+        }
+        const def = this._registry.default();
+        if (def) { return def; }
+        // Last resort if registry is empty (e.g. user hid all built-ins and added none)
+        return { id: 'claude-code', label: 'Claude Code', command: 'claude' };
+    }
 
     resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -36,6 +65,7 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
         this._pendingOutput = [];
 
         this._view = webviewView;
+        webviewView.description = this._activeAgent.label;
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -117,10 +147,9 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
     }
 
     private _spawnProcess(cols?: number, rows?: number): void {
-        this._log.info(`_spawnProcess called, cols=${cols}, rows=${rows}`);
+        this._log.info(`_spawnProcess called, cols=${cols}, rows=${rows}, agent=${this._activeAgent.id}`);
         this._killProcess();
 
-        // Find the node-pty module path
         let nodePtyPath: string;
         try {
             nodePtyPath = findNodePtyPath(this._log);
@@ -134,18 +163,17 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
 
         // Spawn the pty host in a PLAIN Node.js process (not Electron).
         // cp.fork() uses Electron's binary which has ConPTY deadlock issues.
-        // We use the system Node.js to avoid this entirely.
         const ptyHostScript = path.join(this._context.extensionPath, 'dist', 'ptyHost.js');
         const nodeExe = this._findSystemNode();
         this._log.info(`Using Node.js: ${nodeExe}`);
         this._log.info(`Pty host script: ${ptyHostScript}`);
-        this._postOutput('\x1b[2mStarting Claude Code...\x1b[0m\r\n');
+        this._postOutput(`\x1b[2mStarting ${this._activeAgent.label}...\x1b[0m\r\n`);
 
         try {
             this._ptyHost = cp.fork(ptyHostScript, [nodePtyPath], {
                 execPath: nodeExe,
                 stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-                execArgv: [],  // Strip --inspect and other debug flags
+                execArgv: [],
             });
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -156,13 +184,11 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
 
         this._log.info(`Pty host forked, pid=${this._ptyHost.pid}`);
 
-        // Timeout if we never hear from the pty host
         const readyTimeout = setTimeout(() => {
             this._log.warn('Pty host never sent ready message after 5s');
             this._postOutput('\x1b[33mTimeout waiting for pty host\x1b[0m\r\n');
         }, 5000);
 
-        // Capture stdout/stderr from the pty host for debugging (log only)
         this._ptyHost.stdout?.on('data', (data: Buffer) => {
             this._log.info(`ptyHost stdout: ${data.toString().trim()}`);
         });
@@ -219,19 +245,31 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
     private _sendSpawnCommand(cols?: number, rows?: number): void {
         if (!this._ptyHost?.connected) { return; }
 
+        const agent = this._activeAgent;
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
 
-        const args: string[] = [];
+        const args = agent.args ? agent.args.slice() : [];
 
-        // Resolve full path to claude binary since node-pty needs it
+        // Resolve full path to the agent binary since node-pty needs it.
+        // Use execFileSync (not execSync) so a user-supplied command can't be
+        // shell-interpolated as an injection vector.
         let file: string;
-        try {
-            const cmd = process.platform === 'win32' ? 'where claude' : 'which claude';
-            file = cp.execSync(cmd, { encoding: 'utf8', timeout: 5000 }).trim().split(/\r?\n/)[0];
-            this._log.info(`Resolved claude path: ${file}`);
-        } catch {
-            file = 'claude';
-            this._log.warn('Could not resolve claude path, using bare name');
+        if (path.isAbsolute(agent.command) && fs.existsSync(agent.command)) {
+            file = agent.command;
+            this._log.info(`Using absolute agent path: ${file}`);
+        } else {
+            try {
+                const lookupBin = process.platform === 'win32' ? 'where' : 'which';
+                const out = cp.execFileSync(lookupBin, [agent.command], {
+                    encoding: 'utf8',
+                    timeout: 5000,
+                }).trim();
+                file = out.split(/\r?\n/)[0] || agent.command;
+                this._log.info(`Resolved ${agent.command} → ${file}`);
+            } catch {
+                file = agent.command;
+                this._log.warn(`Could not resolve ${agent.command}, using bare name`);
+            }
         }
 
         const env: Record<string, string> = {};
@@ -242,6 +280,11 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
         }
         env['FORCE_COLOR'] = '1';
         env['COLORTERM'] = 'truecolor';
+        if (agent.env) {
+            for (const [k, v] of Object.entries(agent.env)) {
+                env[k] = v;
+            }
+        }
 
         this._log.info(`Sending spawn: ${file} ${args.join(' ')} in ${workspaceFolder}`);
 
@@ -260,17 +303,13 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
     }
 
     private _findSystemNode(): string {
-        // Look for a plain Node.js binary (NOT Electron) to run the pty host.
-        // Electron's binary has ConPTY deadlock issues.
         const candidates: string[] = [];
 
         if (process.platform === 'win32') {
-            // Common Windows install locations
             const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
             candidates.push(
                 path.join(programFiles, 'nodejs', 'node.exe'),
             );
-            // nvm-windows
             const nvmHome = process.env['NVM_HOME'];
             if (nvmHome) {
                 const nvmSymlink = process.env['NVM_SYMLINK'];
@@ -278,7 +317,6 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
                     candidates.push(path.join(nvmSymlink, 'node.exe'));
                 }
             }
-            // fnm / volta
             const localAppData = process.env['LOCALAPPDATA'] || '';
             if (localAppData) {
                 candidates.push(path.join(localAppData, 'fnm_multishells', 'node.exe'));
@@ -286,23 +324,20 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
             }
         } else {
             candidates.push('/usr/local/bin/node', '/usr/bin/node');
-            // nvm
             const nvmDir = process.env['NVM_DIR'];
             if (nvmDir) {
                 candidates.push(path.join(nvmDir, 'current', 'bin', 'node'));
             }
         }
 
-        // Also try finding node via PATH using which/where
         try {
-            const cmd = process.platform === 'win32' ? 'where node' : 'which node';
-            const result = cp.execSync(cmd, { encoding: 'utf8', timeout: 3000 }).trim();
-            // 'where' on Windows can return multiple lines
+            const lookupBin = process.platform === 'win32' ? 'where' : 'which';
+            const result = cp.execFileSync(lookupBin, ['node'], { encoding: 'utf8', timeout: 3000 }).trim();
             const lines = result.split(/\r?\n/);
             for (const line of lines) {
                 const trimmed = line.trim();
                 if (trimmed && !candidates.includes(trimmed)) {
-                    candidates.unshift(trimmed); // Prefer PATH result
+                    candidates.unshift(trimmed);
                 }
             }
         } catch {
@@ -316,7 +351,6 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        // Last resort: just return 'node' and hope it's on PATH
         this._log.warn('Could not find system Node.js, falling back to "node"');
         return 'node';
     }
@@ -333,8 +367,6 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
         const termConfig = vscode.workspace.getConfiguration('terminal.integrated');
         const editorConfig = vscode.workspace.getConfiguration('editor');
 
-        // VS Code's default terminal font fallback chain:
-        // terminal.integrated.fontFamily → editor.fontFamily → platform default
         const WINDOWS_DEFAULT = "'Cascadia Mono', Consolas, 'Courier New', monospace";
         const MAC_DEFAULT = "Menlo, Monaco, 'Courier New', monospace";
         const LINUX_DEFAULT = "'Droid Sans Mono', 'monospace', monospace";
@@ -368,7 +400,6 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
             } catch {
                 // Ignore
             }
-            // Give it a moment to exit gracefully, then force kill
             setTimeout(() => {
                 if (!host.killed) {
                     try { host.kill(); } catch { /* */ }
@@ -377,11 +408,25 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    async switchAgent(agent: AgentDefinition): Promise<void> {
+        if (agent.id === this._activeAgent.id) {
+            this._log.info(`switchAgent: already on ${agent.id}`);
+            return;
+        }
+        this._log.info(`switchAgent: ${this._activeAgent.id} → ${agent.id}`);
+        this._activeAgent = agent;
+        await this._context.workspaceState.update(STATE_KEY, agent.id);
+        await this._context.globalState.update(STATE_KEY, agent.id);
+        if (this._view) {
+            this._view.description = agent.label;
+        }
+        this.restart();
+    }
+
     restart(): void {
         if (this._ready && this._view) {
             this._view.webview.postMessage({ type: 'clear' });
             this._killProcess();
-            // Brief delay for cleanup, then spawn fresh pty host with correct dimensions
             setTimeout(() => this._spawnProcess(this._lastCols, this._lastRows), 300);
         }
     }
@@ -392,6 +437,23 @@ export class ClaudeTerminalProvider implements vscode.WebviewViewProvider {
 
     focus(): void {
         this._view?.show?.(true);
+    }
+
+    /**
+     * If the active agent is no longer in the registry, fall back to the
+     * default. Called by extension.ts after registry rebuilds.
+     */
+    reconcileWithRegistry(): void {
+        if (this._registry.getAgent(this._activeAgent.id)) {
+            return;
+        }
+        const fallback = this._registry.default();
+        if (!fallback) {
+            this._log.warn(`Active agent ${this._activeAgent.id} no longer exists and registry is empty`);
+            return;
+        }
+        this._log.info(`Active agent ${this._activeAgent.id} removed; falling back to ${fallback.id}`);
+        void this.switchAgent(fallback);
     }
 
     dispose(): void {
