@@ -21,8 +21,13 @@ override agents via settings, so any CLI that runs as an interactive TUI works.
 - VS Code 1.85 or later.
 - The agent's CLI must be on `PATH` (or specified as an absolute path in
   settings). For the built-ins, that means `claude` and/or `opencode`.
-- A system-installed Node.js (used to run the PTY host out-of-process; this
-  sidesteps a ConPTY deadlock that hits Electron's bundled Node on Windows).
+- **On Windows only**: a system-installed Node.js. The PTY host runs out of
+  process to dodge a ConPTY deadlock in Electron's bundled Node. macOS, Linux,
+  and WSL use VS Code's bundled Node directly — no extra install needed.
+
+WSL works the same as native Linux: the VS Code Server extension host runs
+inside the distribution, so `process.platform` is `linux` and the
+non-Windows code path applies.
 
 ## Switching agents
 
@@ -69,6 +74,28 @@ optional codicon id shown in the picker.
 "agentPanel.defaultAgent": "opencode"
 ```
 
+## Installing in a remote (WSL, SSH, Dev Containers)
+
+The extension declares `extensionKind: ["workspace"]`, so it runs in the
+workspace extension host — i.e. **inside** the WSL distro / SSH remote / dev
+container, not on your local machine. That's where the agent CLI gets spawned
+and where the agent's working directory lives.
+
+Three ways to install it remotely:
+
+1. **From the marketplace** (once published): connect to the remote, open the
+   Extensions view, search for *Agent Panel*, and click **Install in WSL:
+   \<distro\>** (or the equivalent for your remote).
+2. **From a local install**: install the extension locally first, then connect
+   to your remote — VS Code prompts you to install it on the remote side too.
+3. **Sideloading a `.vsix`** without publishing: build a package
+   (`npx @vscode/vsce package`) and from a terminal *inside the remote* run
+   `code --install-extension /path/to/agent-panel-0.2.0.vsix`. Or use the
+   Extensions view's **⋯ → Install from VSIX...** while focused on the remote.
+
+For native Windows or native Linux/macOS (no remote), there's nothing special
+to do — the extension installs and runs in the local host.
+
 ## Development
 
 ```bash
@@ -101,11 +128,12 @@ media/
   main.js                   xterm.js client running in the webview
 ```
 
-The PTY host is intentionally split into a separate process spawned with the
-system Node binary. `cp.fork()` would inherit Electron's binary, which has a
-ConPTY deadlock on Windows. The host re-uses `node-pty` shipped inside
-VS Code's `app.asar.unpacked`, so the extension itself does not bundle native
-modules.
+The PTY host runs as a separate process. On Windows it is spawned with a
+system Node binary to dodge a ConPTY deadlock that hits Electron's bundled
+Node; on macOS, Linux, and WSL it uses Electron's Node directly, whose ABI
+matches VS Code's bundled `node-pty`. Either way, the host re-uses `node-pty`
+shipped inside VS Code's `app.asar.unpacked`, so the extension itself does not
+bundle native modules.
 
 ## Caveats
 

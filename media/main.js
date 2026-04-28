@@ -112,6 +112,7 @@
     var exitOverlay = document.getElementById('exit-overlay');
     var exitMessage = document.getElementById('exit-message');
     var restartBtn = document.getElementById('restart-btn');
+    var switchBtn = document.getElementById('switch-btn');
 
     terminal.open(container);
 
@@ -216,6 +217,13 @@
         exitOverlay.classList.remove('visible');
         vscode.postMessage({ type: 'requestRestart' });
     });
+
+    // Switch Agent button
+    if (switchBtn) {
+        switchBtn.addEventListener('click', function () {
+            vscode.postMessage({ type: 'requestSwitchAgent' });
+        });
+    }
 
     // Signal ready with initial dimensions
     setTimeout(function () {

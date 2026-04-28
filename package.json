@@ -10,6 +10,9 @@
   "categories": [
     "Other"
   ],
+  "extensionKind": [
+    "workspace"
+  ],
   "activationEvents": [
     "onCommand:agentPanel.switchAgent"
   ],

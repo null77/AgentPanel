@@ -143,6 +143,9 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
             case 'requestRestart':
                 this.restart();
                 break;
+            case 'requestSwitchAgent':
+                void vscode.commands.executeCommand('agentPanel.switchAgent');
+                break;
         }
     }
 
@@ -161,20 +164,28 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
         }
         this._log.info(`Found node-pty: ${nodePtyPath}`);
 
-        // Spawn the pty host in a PLAIN Node.js process (not Electron).
-        // cp.fork() uses Electron's binary which has ConPTY deadlock issues.
+        // On Windows, fork the PTY host with a system Node binary to dodge a
+        // ConPTY deadlock that hits Electron's bundled Node. On macOS, Linux,
+        // and WSL, fork uses Electron's Node directly — its ABI matches VS
+        // Code's bundled node-pty, so no system Node is required.
         const ptyHostScript = path.join(this._context.extensionPath, 'dist', 'ptyHost.js');
-        const nodeExe = this._findSystemNode();
-        this._log.info(`Using Node.js: ${nodeExe}`);
         this._log.info(`Pty host script: ${ptyHostScript}`);
+
+        const forkOptions: cp.ForkOptions = {
+            stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+            execArgv: [],
+        };
+        if (process.platform === 'win32') {
+            forkOptions.execPath = this._findSystemNode();
+            this._log.info(`Using system Node.js: ${forkOptions.execPath}`);
+        } else {
+            this._log.info(`Using Electron's bundled Node`);
+        }
+
         this._postOutput(`\x1b[2mStarting ${this._activeAgent.label}...\x1b[0m\r\n`);
 
         try {
-            this._ptyHost = cp.fork(ptyHostScript, [nodePtyPath], {
-                execPath: nodeExe,
-                stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-                execArgv: [],
-            });
+            this._ptyHost = cp.fork(ptyHostScript, [nodePtyPath], forkOptions);
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this._log.error(`Failed to fork pty host: ${msg}`);
@@ -302,46 +313,37 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    /**
+     * Locate a system-installed Node.js binary. Windows-only — used to dodge
+     * the ConPTY deadlock that hits Electron's bundled Node when forking the
+     * PTY host. Other platforms use Electron's Node directly.
+     */
     private _findSystemNode(): string {
         const candidates: string[] = [];
 
-        if (process.platform === 'win32') {
-            const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
-            candidates.push(
-                path.join(programFiles, 'nodejs', 'node.exe'),
-            );
-            const nvmHome = process.env['NVM_HOME'];
-            if (nvmHome) {
-                const nvmSymlink = process.env['NVM_SYMLINK'];
-                if (nvmSymlink) {
-                    candidates.push(path.join(nvmSymlink, 'node.exe'));
-                }
-            }
-            const localAppData = process.env['LOCALAPPDATA'] || '';
-            if (localAppData) {
-                candidates.push(path.join(localAppData, 'fnm_multishells', 'node.exe'));
-                candidates.push(path.join(localAppData, 'volta', 'bin', 'node.exe'));
-            }
-        } else {
-            candidates.push('/usr/local/bin/node', '/usr/bin/node');
-            const nvmDir = process.env['NVM_DIR'];
-            if (nvmDir) {
-                candidates.push(path.join(nvmDir, 'current', 'bin', 'node'));
-            }
+        const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+        candidates.push(path.join(programFiles, 'nodejs', 'node.exe'));
+
+        const nvmSymlink = process.env['NVM_SYMLINK'];
+        if (nvmSymlink) {
+            candidates.push(path.join(nvmSymlink, 'node.exe'));
+        }
+        const localAppData = process.env['LOCALAPPDATA'];
+        if (localAppData) {
+            candidates.push(path.join(localAppData, 'fnm_multishells', 'node.exe'));
+            candidates.push(path.join(localAppData, 'volta', 'bin', 'node.exe'));
         }
 
         try {
-            const lookupBin = process.platform === 'win32' ? 'where' : 'which';
-            const result = cp.execFileSync(lookupBin, ['node'], { encoding: 'utf8', timeout: 3000 }).trim();
-            const lines = result.split(/\r?\n/);
-            for (const line of lines) {
+            const result = cp.execFileSync('where', ['node'], { encoding: 'utf8', timeout: 3000 }).trim();
+            for (const line of result.split(/\r?\n/)) {
                 const trimmed = line.trim();
                 if (trimmed && !candidates.includes(trimmed)) {
                     candidates.unshift(trimmed);
                 }
             }
         } catch {
-            // Ignore
+            // 'where node' returned non-zero — Node may not be on PATH.
         }
 
         for (const candidate of candidates) {
@@ -529,18 +531,31 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
             font-size: 14px;
             margin-bottom: 12px;
         }
-        #exit-overlay .restart-btn {
+        #exit-overlay .actions {
+            display: flex;
+            gap: 8px;
+        }
+        #exit-overlay button {
             padding: 6px 16px;
-            background: var(--vscode-button-background, #0e639c);
-            color: var(--vscode-button-foreground, #fff);
             border: none;
             border-radius: 2px;
             cursor: pointer;
             font-family: var(--vscode-font-family, sans-serif);
             font-size: 13px;
         }
+        #exit-overlay .restart-btn {
+            background: var(--vscode-button-background, #0e639c);
+            color: var(--vscode-button-foreground, #fff);
+        }
         #exit-overlay .restart-btn:hover {
             background: var(--vscode-button-hoverBackground, #1177bb);
+        }
+        #exit-overlay .switch-btn {
+            background: var(--vscode-button-secondaryBackground, #3a3d41);
+            color: var(--vscode-button-secondaryForeground, #fff);
+        }
+        #exit-overlay .switch-btn:hover {
+            background: var(--vscode-button-secondaryHoverBackground, #45494e);
         }
         #error-display {
             display: none;
@@ -557,7 +572,10 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
     <div id="terminal-container">
         <div id="exit-overlay">
             <div class="message" id="exit-message">Process exited</div>
-            <button class="restart-btn" id="restart-btn">Click to Restart</button>
+            <div class="actions">
+                <button class="restart-btn" id="restart-btn">Restart</button>
+                <button class="switch-btn" id="switch-btn">Switch Agent</button>
+            </div>
         </div>
     </div>
     <script nonce="${nonce}">
