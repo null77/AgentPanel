@@ -126,15 +126,78 @@
         }
     }
 
-    // Fit after a small delay to ensure layout is settled
-    setTimeout(function () {
-        try { fitAddon.fit(); } catch (e) { /* ignore */ }
-    }, 50);
-
     // Forward user input to extension host
     terminal.onData(function (data) {
         vscode.postMessage({ type: 'input', data: data });
     });
+
+    // OSC 52 — programs running inside the terminal (e.g. OpenCode, tmux) can
+    // emit "ESC ] 52 ; <clip> ; <base64> BEL" to request a clipboard write.
+    // xterm.js parses it but does NOT wire to the system clipboard by default,
+    // so we register a handler that decodes and forwards to the host.
+    if (terminal.parser && terminal.parser.registerOscHandler) {
+        terminal.parser.registerOscHandler(52, function (data) {
+            var sep = data.indexOf(';');
+            if (sep < 0) { return false; }
+            var payload = data.slice(sep + 1);
+            if (!payload || payload === '?') {
+                // Empty or read-back query — ignore (don't leak clipboard contents).
+                return true;
+            }
+            try {
+                var binary = atob(payload);
+                var bytes = new Uint8Array(binary.length);
+                for (var i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                var text = new TextDecoder('utf-8').decode(bytes);
+                vscode.postMessage({ type: 'copy', data: text });
+                return true;
+            } catch (e) {
+                return false;
+            }
+        });
+    }
+
+    // Copy shortcut:
+    //   Win/Linux: Ctrl+Shift+C
+    //   macOS:     Cmd+C
+    // Plain Ctrl+C is left as interrupt — we only intercept the copy combo
+    // when there's a selection; other keys pass through unchanged.
+    var isMac = navigator.platform.indexOf('Mac') === 0;
+    terminal.attachCustomKeyEventHandler(function (e) {
+        if (e.type !== 'keydown') { return true; }
+        if (e.key.toLowerCase() !== 'c') { return true; }
+
+        var isCopy = isMac
+            ? (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey)
+            : (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey);
+        if (isCopy) {
+            var sel = terminal.getSelection();
+            if (sel) {
+                vscode.postMessage({ type: 'copy', data: sel });
+                e.preventDefault();
+                return false;
+            }
+        }
+        return true;
+    });
+
+    // Paste handler — covers Ctrl+V, Ctrl+Shift+V, Cmd+V, and right-click
+    // paste in one place. We capture the paste event before xterm's hidden
+    // textarea sees it, forward the text as terminal input, and
+    // preventDefault so xterm's built-in paste handler doesn't ALSO write
+    // the same bytes. Without this, intercepting Ctrl+V via keydown caused
+    // a double paste (our requestPaste round-trip + xterm's native paste
+    // both fired).
+    window.addEventListener('paste', function (e) {
+        var text = e.clipboardData && e.clipboardData.getData('text/plain');
+        if (text) {
+            vscode.postMessage({ type: 'input', data: text });
+        }
+        e.preventDefault();
+        e.stopPropagation();
+    }, true);
 
     // Handle messages from extension host
     window.addEventListener('message', function (event) {
@@ -194,23 +257,48 @@
         }
     });
 
-    // Handle resize
+    // Drive the initial 'ready' off the ResizeObserver so the agent spawns
+    // with the real container size. A fixed timer would race with VS Code's
+    // panel-open animation / first paint, leaving the agent stuck at the
+    // 80x24 fallback until the user manually resized.
+    var hasSentReady = false;
+    var lastCols = 0;
+    var lastRows = 0;
+
     var resizeObserver = new ResizeObserver(function () {
         try {
             fitAddon.fit();
-            var dims = fitAddon.proposeDimensions();
-            if (dims) {
-                vscode.postMessage({
-                    type: 'resize',
-                    cols: dims.cols,
-                    rows: dims.rows,
-                });
-            }
         } catch (e) {
-            // Fit can throw if terminal not yet visible
+            return;  // terminal not yet visible/attached
+        }
+        var dims = fitAddon.proposeDimensions();
+        if (!dims || !dims.cols || !dims.rows) { return; }
+
+        if (!hasSentReady) {
+            hasSentReady = true;
+            lastCols = dims.cols;
+            lastRows = dims.rows;
+            vscode.postMessage({ type: 'ready', cols: dims.cols, rows: dims.rows });
+            return;
+        }
+
+        if (dims.cols !== lastCols || dims.rows !== lastRows) {
+            lastCols = dims.cols;
+            lastRows = dims.rows;
+            vscode.postMessage({ type: 'resize', cols: dims.cols, rows: dims.rows });
         }
     });
     resizeObserver.observe(container);
+
+    // Backup: if the panel is collapsed at startup the observer never fires
+    // with a non-zero size. Send a default 'ready' after 1.5s so the agent
+    // still spawns; the observer will send a 'resize' once the panel opens.
+    setTimeout(function () {
+        if (!hasSentReady) {
+            hasSentReady = true;
+            vscode.postMessage({ type: 'ready', cols: 80, rows: 24 });
+        }
+    }, 1500);
 
     // Restart button
     restartBtn.addEventListener('click', function () {
@@ -224,16 +312,4 @@
             vscode.postMessage({ type: 'requestSwitchAgent' });
         });
     }
-
-    // Signal ready with initial dimensions
-    setTimeout(function () {
-        try { fitAddon.fit(); } catch (e) { /* ignore */ }
-        var dims = null;
-        try { dims = fitAddon.proposeDimensions(); } catch (e) { /* ignore */ }
-        vscode.postMessage({
-            type: 'ready',
-            cols: dims ? dims.cols : 80,
-            rows: dims ? dims.rows : 24,
-        });
-    }, 200);
 })();

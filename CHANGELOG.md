@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `~` (home directory) and `${env:VAR}` substitutions in `agentPanel.agents`
+  `env` values, so users can write `"CLAUDE_CONFIG_DIR": "~/.claude-work"`
+  without expanding the path manually. Enables the work / personal Claude
+  Code profile pattern documented in the README.
+
 ## [0.2.0] - 2026-04-28
 
 Renamed and generalized from `claude-code-panel` to `agent-panel`.

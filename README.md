@@ -67,6 +67,43 @@ Agent**, alongside **Restart Agent** and **Clear Agent Terminal**.
 time) or an absolute path. `args` and `env` are optional. `icon` is an
 optional codicon id shown in the picker.
 
+In `env` values, `~` (home directory) and `${env:VAR}` are expanded at spawn
+time, so `~/.foo` and `${env:HOME}/.foo` both work cross-platform.
+
+### Multiple Claude Code profiles (work / personal)
+
+Claude Code reads its config (credentials, memory, settings) from
+`CLAUDE_CONFIG_DIR`, falling back to `~/.claude`. Define one custom agent per
+profile so each runs against an isolated config directory:
+
+```jsonc
+"agentPanel.agents": [
+  {
+    "id": "claude-work",
+    "label": "Claude Code (Work)",
+    "command": "claude",
+    "icon": "sparkle",
+    "env": { "CLAUDE_CONFIG_DIR": "~/.claude-work" }
+  },
+  {
+    "id": "claude-personal",
+    "label": "Claude Code (Personal)",
+    "command": "claude",
+    "icon": "sparkle",
+    "env": { "CLAUDE_CONFIG_DIR": "~/.claude-personal" }
+  }
+]
+```
+
+The built-in `claude-code` entry stays available and uses Claude's default
+`~/.claude` directory. Use the **Switch Agent** button to move between
+profiles; the active selection persists per workspace, so each workspace can
+default to a different profile if you like.
+
+The first time you switch into a new profile, run `/login` inside Claude
+Code to authenticate against that config dir — credentials, memory, and
+settings are kept separate from then on.
+
 ### Example: hide Claude Code, keep OpenCode
 
 ```jsonc

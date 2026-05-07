@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
-import { findNodePtyPath } from './utils';
+import { findNodePtyPath, expandEnvValue } from './utils';
 import { AgentDefinition, AgentRegistry } from './AgentRegistry';
 
 const STATE_KEY = 'agentPanel.activeAgentId';
@@ -145,6 +145,11 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
                 break;
             case 'requestSwitchAgent':
                 void vscode.commands.executeCommand('agentPanel.switchAgent');
+                break;
+            case 'copy':
+                if (typeof message.data === 'string' && message.data) {
+                    void vscode.env.clipboard.writeText(message.data);
+                }
                 break;
         }
     }
@@ -293,7 +298,7 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
         env['COLORTERM'] = 'truecolor';
         if (agent.env) {
             for (const [k, v] of Object.entries(agent.env)) {
-                env[k] = v;
+                env[k] = expandEnvValue(v);
             }
         }
 

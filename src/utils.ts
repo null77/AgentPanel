@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 
 /**
  * Find the path to node-pty module (does NOT load it).
@@ -38,4 +39,25 @@ export function findNodePtyPath(log: vscode.LogOutputChannel): string {
         candidates.map(c => `  - ${c}`).join('\n') +
         '\nEnsure VS Code is a recent version.'
     );
+}
+
+/**
+ * Expand `~` (home directory) and `${env:VAR}` references in a string.
+ * Applied to user-supplied agent `env` values from settings so that
+ * `~/.claude-work` or `${env:HOME}/.claude-work` resolve to absolute
+ * paths before reaching node-pty / the agent CLI.
+ *
+ *   ~          → os.homedir() (only when the value is `~`, `~/…`, or `~\…`)
+ *   ${env:VAR} → process.env.VAR, or empty string if undefined
+ */
+export function expandEnvValue(value: string): string {
+    let result = value;
+    if (result === '~') {
+        result = os.homedir();
+    } else if (result.startsWith('~/') || result.startsWith('~\\')) {
+        result = os.homedir() + result.slice(1);
+    }
+    return result.replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => {
+        return process.env[name] ?? '';
+    });
 }
