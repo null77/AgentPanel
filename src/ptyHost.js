@@ -25,6 +25,10 @@ process.send({ type: 'log', text: 'node-pty loaded, spawn type: ' + typeof nodeP
 process.send({ type: 'ready' });
 
 let pty = null;
+// Holds the latest resize that arrived before pty was spawned; applied
+// immediately after spawn so an early post-animation resize from the
+// webview isn't silently dropped.
+let pendingResize = null;
 
 process.on('message', (msg) => {
     switch (msg.type) {
@@ -33,6 +37,14 @@ process.on('message', (msg) => {
             process.send({ type: 'log', text: 'spawn options: cols=' + msg.options.cols + ' rows=' + msg.options.rows + ' cwd=' + msg.options.cwd });
             process.send({ type: 'log', text: 'calling nodePty.spawn()...' });
             try {
+                // If a resize was buffered while we were still loading, fold
+                // it into the spawn options so the pty starts at the right
+                // size in one step.
+                if (pendingResize) {
+                    msg.options.cols = pendingResize.cols;
+                    msg.options.rows = pendingResize.rows;
+                    pendingResize = null;
+                }
                 pty = nodePty.spawn(msg.file, msg.args, msg.options);
                 process.send({ type: 'log', text: 'nodePty.spawn() returned, pid=' + pty.pid });
                 process.send({ type: 'spawned', pid: pty.pid });
@@ -71,6 +83,11 @@ process.on('message', (msg) => {
                 } catch (e) {
                     // Resize can fail if process exited
                 }
+            } else {
+                // Buffer until spawn; otherwise the resize that fixes the
+                // first-load size mismatch gets silently dropped while the
+                // ptyHost is still loading node-pty.
+                pendingResize = { cols: msg.cols, rows: msg.rows };
             }
             break;
         }

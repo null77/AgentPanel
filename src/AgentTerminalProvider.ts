@@ -97,6 +97,27 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
             })
         );
 
+        // Re-focus xterm when the view becomes visible (panel tab re-opened)
+        // and when the VS Code window regains OS focus while we're visible.
+        // Without this, the iframe gets focus but xterm's hidden textarea
+        // doesn't, and keystrokes fall through to VS Code shortcuts (Alt-key
+        // opens the menubar).
+        this._disposables.push(
+            webviewView.onDidChangeVisibility(() => {
+                if (webviewView.visible) {
+                    webviewView.webview.postMessage({ type: 'focus' });
+                }
+            })
+        );
+
+        this._disposables.push(
+            vscode.window.onDidChangeWindowState((state) => {
+                if (state.focused && webviewView.visible) {
+                    webviewView.webview.postMessage({ type: 'focus' });
+                }
+            })
+        );
+
         this._disposables.push(
             vscode.workspace.onDidChangeConfiguration((e) => {
                 if (
@@ -151,6 +172,21 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
                     void vscode.env.clipboard.writeText(message.data);
                 }
                 break;
+            case 'requestPaste':
+                void this._handlePasteRequest();
+                break;
+        }
+    }
+
+    private async _handlePasteRequest(): Promise<void> {
+        try {
+            const text = await vscode.env.clipboard.readText();
+            if (text && this._ptyHost?.connected) {
+                this._ptyHost.send({ type: 'input', data: text });
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this._log.warn(`Clipboard read failed: ${msg}`);
         }
     }
 
@@ -258,8 +294,15 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private _sendSpawnCommand(cols?: number, rows?: number): void {
+    private _sendSpawnCommand(_cols?: number, _rows?: number): void {
         if (!this._ptyHost?.connected) { return; }
+
+        // Always spawn at the latest known dims rather than whatever was
+        // captured at webview-ready time. The container may still be
+        // animating open when `ready` fires, so a `resize` typically follows
+        // shortly after — we want the spawn to honor that final size.
+        const cols = this._lastCols;
+        const rows = this._lastRows;
 
         const agent = this._activeAgent;
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
