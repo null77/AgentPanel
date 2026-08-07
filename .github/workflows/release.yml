@@ -1,8 +1,19 @@
 name: Release
 
 # Tag a commit as v1.2.3 (matching package.json) and push the tag to cut a
-# release. Requires a VSCE_PAT repository secret: an Azure DevOps personal
-# access token with Marketplace > Manage scope, for the `JamieMadill` publisher.
+# release. Always packages the .vsix and opens a GitHub release.
+#
+# The Marketplace publish step is skipped unless a VSCE_PAT repository secret
+# exists, so tagging works before publishing is automated — upload the .vsix
+# by hand at https://marketplace.visualstudio.com/manage in that case.
+#
+# VSCE_PAT is an Azure DevOps personal access token with Marketplace > Manage
+# scope for the `JamieMadill` publisher. Note that the Marketplace requires it
+# to be scoped to "All accessible organizations", i.e. a *global* PAT — and
+# Azure DevOps retires global PATs on 2026-12-01. Before then this needs to
+# move to Microsoft Entra ID (`vsce publish --azure-credential`, which needs a
+# managed identity added as a publisher contributor), or be re-tested with an
+# organization-scoped PAT.
 on:
   push:
     tags:
@@ -35,9 +46,16 @@ jobs:
       - run: npx vsce package --out "agent-panel-${GITHUB_REF_NAME#v}.vsix"
 
       - name: Publish to Visual Studio Marketplace
-        run: npx vsce publish --packagePath "agent-panel-${GITHUB_REF_NAME#v}.vsix"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::warning::VSCE_PAT is not set — skipping the Marketplace publish. \
+          The .vsix is attached to the GitHub release; upload it manually at \
+          https://marketplace.visualstudio.com/manage/publishers/JamieMadill"
+            exit 0
+          fi
+          npx vsce publish --packagePath "agent-panel-${GITHUB_REF_NAME#v}.vsix"
 
       - name: Extract release notes from CHANGELOG
         run: |
