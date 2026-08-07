@@ -2,7 +2,7 @@ name: Release
 
 # Tag a commit as v1.2.3 (matching package.json) and push the tag to cut a
 # release. Requires a VSCE_PAT repository secret: an Azure DevOps personal
-# access token with Marketplace > Manage scope, for the `jmadill` publisher.
+# access token with Marketplace > Manage scope, for the `JamieMadill` publisher.
 on:
   push:
     tags:

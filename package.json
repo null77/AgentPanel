@@ -3,7 +3,7 @@
   "displayName": "Agent Panel",
   "description": "A dedicated panel tab for running TUI agent CLIs (Claude Code, OpenCode, and more) alongside your terminals",
   "version": "1.0.0",
-  "publisher": "jmadill",
+  "publisher": "JamieMadill",
   "license": "MIT",
   "icon": "resources/icon.png",
   "repository": {

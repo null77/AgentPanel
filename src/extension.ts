@@ -103,7 +103,7 @@ async function runSwitchAgentPicker(): Promise<void> {
     if (picked.actionId === CONFIGURE_ITEM_ID) {
         await vscode.commands.executeCommand(
             'workbench.action.openSettings',
-            '@ext:jmadill.agent-panel'
+            '@ext:JamieMadill.agent-panel'
         );
         return;
     }
