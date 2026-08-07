@@ -1,0 +1,62 @@
+name: Release
+
+# Tag a commit as v1.2.3 (matching package.json) and push the tag to cut a
+# release. Requires a VSCE_PAT repository secret: an Azure DevOps personal
+# access token with Marketplace > Manage scope, for the `jmadill` publisher.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      - name: Verify tag matches package.json version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
+            exit 1
+          fi
+
+      - run: npm run typecheck
+      - run: npx vsce package --out "agent-panel-${GITHUB_REF_NAME#v}.vsix"
+
+      - name: Publish to Visual Studio Marketplace
+        run: npx vsce publish --packagePath "agent-panel-${GITHUB_REF_NAME#v}.vsix"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="## [$version]" '
+            index($0, v) == 1 { in_section = 1; next }
+            in_section && /^## \[/ { exit }
+            in_section { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG section found for $version" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            "agent-panel-${GITHUB_REF_NAME#v}.vsix"
+        env:
+          GH_TOKEN: ${{ github.token }}

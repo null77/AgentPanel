@@ -2,9 +2,10 @@
   "name": "agent-panel",
   "displayName": "Agent Panel",
   "description": "A dedicated panel tab for running TUI agent CLIs (Claude Code, OpenCode, and more) alongside your terminals",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "publisher": "jmadill",
   "license": "MIT",
+  "icon": "resources/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/null77/AgentPanel.git"
@@ -17,13 +18,22 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
+  "keywords": [
+    "claude code",
+    "opencode",
+    "agent",
+    "terminal",
+    "panel"
+  ],
+  "galleryBanner": {
+    "color": "#2B2620",
+    "theme": "dark"
+  },
   "extensionKind": [
     "workspace"
-  ],
-  "activationEvents": [
-    "onCommand:agentPanel.switchAgent"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -49,21 +59,25 @@
       {
         "command": "agentPanel.switchAgent",
         "title": "Switch Agent",
+        "category": "Agent Panel",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "agentPanel.restart",
         "title": "Restart Agent",
+        "category": "Agent Panel",
         "icon": "$(debug-restart)"
       },
       {
         "command": "agentPanel.clear",
         "title": "Clear Agent Terminal",
+        "category": "Agent Panel",
         "icon": "$(clear-all)"
       },
       {
         "command": "agentPanel.focus",
-        "title": "Focus Agent Panel"
+        "title": "Focus Agent Panel",
+        "category": "Agent Panel"
       }
     ],
     "menus": {
@@ -96,7 +110,11 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "label", "command"],
+            "required": [
+              "id",
+              "label",
+              "command"
+            ],
             "properties": {
               "id": {
                 "type": "string",
@@ -113,13 +131,17 @@
               },
               "args": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "default": [],
                 "description": "Arguments passed to the agent binary."
               },
               "env": {
                 "type": "object",
-                "additionalProperties": { "type": "string" },
+                "additionalProperties": {
+                  "type": "string"
+                },
                 "description": "Extra environment variables merged on top of the inherited environment."
               },
               "icon": {
@@ -141,7 +163,10 @@
           "scope": "window",
           "items": {
             "type": "string",
-            "enum": ["claude-code", "opencode"]
+            "enum": [
+              "claude-code",
+              "opencode"
+            ]
           },
           "description": "Built-in agent ids to hide from the Switch Agent picker."
         }
@@ -152,7 +177,10 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "build:production": "node esbuild.js --production",
-    "vscode:prepublish": "npm run build:production"
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "vscode:prepublish": "npm run typecheck && npm run build:production"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -160,7 +188,9 @@
     "@xterm/xterm": "^5.5.0"
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.20.0",
     "typescript": "^5.3.0"
   }

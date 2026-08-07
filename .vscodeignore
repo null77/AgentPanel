@@ -1,9 +1,13 @@
 .vscode/**
 .claude/**
+.github/**
 src/**
+dist/**/*.map
 tsconfig.json
 esbuild.js
 .gitignore
+.vscodeignore
+*.vsix
 node_modules/**
 !node_modules/@xterm/xterm/css/xterm.css
 !node_modules/@xterm/xterm/lib/xterm.js
