@@ -108,6 +108,46 @@
     var fitAddon = new FitAddonCtor();
     terminal.loadAddon(fitAddon);
 
+    // Send pasted text to the PTY, chunked. For small pastes this is one
+    // postMessage; for large ones we slice into ~4KB chunks and yield to the
+    // event loop between each so the webview can interleave rendering of the
+    // agent's echo output. terminal.paste() ships the entire string in a
+    // single onData call — for a multi-KB paste, the synchronous serialize +
+    // the resulting echo storm starved the render loop and the panel looked
+    // frozen. Bracketed-paste markers wrap the whole sequence; the agent
+    // accumulates intermediate chunks until the end marker arrives.
+    var PASTE_CHUNK = 4096;
+    function pasteToTerminal(text) {
+        if (typeof text !== 'string' || !text) { return; }
+        // Match xterm's paste normalization: \r\n or \n -> \r.
+        text = text.replace(/\r?\n/g, '\r');
+        var bracketed = !!(terminal.modes && terminal.modes.bracketedPasteMode);
+
+        if (text.length <= PASTE_CHUNK) {
+            var data = bracketed ? '\x1b[200~' + text + '\x1b[201~' : text;
+            vscode.postMessage({ type: 'input', data: data });
+            return;
+        }
+
+        if (bracketed) {
+            vscode.postMessage({ type: 'input', data: '\x1b[200~' });
+        }
+        var i = 0;
+        function sendNext() {
+            if (i >= text.length) {
+                if (bracketed) {
+                    vscode.postMessage({ type: 'input', data: '\x1b[201~' });
+                }
+                return;
+            }
+            var end = Math.min(i + PASTE_CHUNK, text.length);
+            vscode.postMessage({ type: 'input', data: text.slice(i, end) });
+            i = end;
+            setTimeout(sendNext, 0);
+        }
+        sendNext();
+    }
+
     var container = document.getElementById('terminal-container');
     var exitOverlay = document.getElementById('exit-overlay');
     var exitMessage = document.getElementById('exit-message');
@@ -239,7 +279,7 @@
         }
         var text = e.clipboardData && e.clipboardData.getData('text/plain');
         if (text) {
-            vscode.postMessage({ type: 'input', data: text });
+            pasteToTerminal(text);
         }
         e.preventDefault();
         e.stopPropagation();
@@ -293,6 +333,9 @@
                     brightWhite: newColors.brightWhite,
                 };
                 try { fitAddon.fit(); } catch (e) { /* ignore */ }
+                break;
+            case 'paste':
+                pasteToTerminal(message.data);
                 break;
             case 'focus':
                 focusTerminal();

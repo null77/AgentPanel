@@ -97,22 +97,17 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
             })
         );
 
-        // Re-focus xterm when the view becomes visible (panel tab re-opened)
-        // and when the VS Code window regains OS focus while we're visible.
+        // Re-focus xterm when the view becomes visible (panel tab re-opened).
         // Without this, the iframe gets focus but xterm's hidden textarea
         // doesn't, and keystrokes fall through to VS Code shortcuts (Alt-key
-        // opens the menubar).
+        // opens the menubar). The webview-side `window` focus listener
+        // handles the OS-focus-regained case for free — forwarding focus
+        // only when the iframe is actually the focus target, so clicks
+        // elsewhere in VS Code (e.g. the integrated terminal) don't get
+        // hijacked back to the panel.
         this._disposables.push(
             webviewView.onDidChangeVisibility(() => {
                 if (webviewView.visible) {
-                    webviewView.webview.postMessage({ type: 'focus' });
-                }
-            })
-        );
-
-        this._disposables.push(
-            vscode.window.onDidChangeWindowState((state) => {
-                if (state.focused && webviewView.visible) {
                     webviewView.webview.postMessage({ type: 'focus' });
                 }
             })
@@ -181,8 +176,15 @@ export class AgentTerminalProvider implements vscode.WebviewViewProvider {
     private async _handlePasteRequest(): Promise<void> {
         try {
             const text = await vscode.env.clipboard.readText();
-            if (text && this._ptyHost?.connected) {
-                this._ptyHost.send({ type: 'input', data: text });
+            // Route back through the webview's xterm.paste() rather than
+            // writing straight to the PTY. xterm wraps the text in bracketed
+            // paste markers (ESC[200~ … ESC[201~) when the agent has enabled
+            // that mode and normalizes newlines to CR. Sending raw bytes here
+            // skipped both, so a multi-line paste was interpreted line-by-line
+            // — each newline submitting a partial prompt and leaving the agent
+            // looking hung.
+            if (text && this._view) {
+                this._view.webview.postMessage({ type: 'paste', data: text });
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
